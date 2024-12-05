@@ -1,164 +1,146 @@
-// gcc -o readImage readImage.c -ljpeg
-// ./readImage
-
+#include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
-#include <jpeglib.h>
-#include <string.h>
 
-#define INPUTFILENAME "../../data/Video1/Images/image0005.jpeg"
-#define OUTPUTFILENAME "Image5.dat"
-#define BLOCK_SIZE 16
+// Buffer to store the bitstream and index to keep track of current position in buffer
+#define MAX_BITSTREAM_SIZE 1024
 
-// Structure for Huffman nodes
-typedef struct HuffmanNode {
-    int value;
-    unsigned freq;
-    struct HuffmanNode *left, *right;
-} HuffmanNode;
-
-// Structure for Huffman code
-typedef struct HuffmanCode {
-    unsigned char bitstring[32]; // Maximum 256 bits
-    int bitlength;
+// Simulate Huffman encoding (actual implementation should use standard tables)
+typedef struct {
+    uint16_t bitstring; // Encoded bitstring
+    uint8_t bitlength;  // Length of the bitstring
 } HuffmanCode;
 
-// Function to decompress JPEG and get raw pixel data
-int decompressJPEG(struct jpeg_decompress_struct *cinfo_p, unsigned char **bmp_buffer, FILE *infile) {
-    struct jpeg_error_mgr jerr;
+// MPEG-1 DC coefficient Huffman encoding table (12 categories)
+HuffmanCode dc_huffman_table[12] = {
+    {0x0, 2},  // Category 0
+    {0x1, 3},  // Category 1
+    {0x3, 3},  // Category 2
+    {0x7, 3},  // Category 3
+    {0xF, 4},  // Category 4
+    {0x1F, 5}, // Category 5
+    {0x3F, 6}, // Category 6
+    {0x7F, 7}, // Category 7
+    {0xFF, 8}, // Category 8
+    {0x1FF, 9}, // Category 9
+    {0x3FF, 10}, // Category 10
+    {0x7FF, 11}  // Category 11
+};
 
-    cinfo_p->err = jpeg_std_error(&jerr);
-    jpeg_create_decompress(cinfo_p);
-    jpeg_stdio_src(cinfo_p, infile);   // Set cinfo.src
-    jpeg_read_header(cinfo_p, TRUE);
-    jpeg_start_decompress(cinfo_p);
+// MPEG-1 AC coefficient Huffman encoding table (including symbols like 0x00, 0x01)
+HuffmanCode ac_huffman_table[] = {
+    {0x00, 0},  // End of Block (EOB)
+    {0x01, 4},  // Run 0, Size 1
+    {0x02, 5},  // Run 1, Size 1
+    {0x03, 6},  // Run 2, Size 1
+    {0x04, 7},  // Run 0, Size 2
+    // Other entries should continue defining the table
+};
 
-    int width = cinfo_p->output_width;
-    int height = cinfo_p->output_height;
-    int pixel_size = cinfo_p->output_components;
-    unsigned long size_bmp = width * height * pixel_size;
+// Zigzag scan table
+const int zigzag_order[64] = {
+    0,  1,  5,  6,  14, 15, 27, 28,
+    2,  4,  7,  13, 16, 26, 29, 42,
+    3,  8,  12, 17, 25, 30, 41, 43,
+    9,  11, 18, 24, 31, 40, 44, 53,
+    10, 19, 23, 32, 39, 45, 52, 54,
+    20, 22, 33, 38, 46, 51, 55, 60,
+    21, 34, 37, 47, 50, 56, 59, 61,
+    35, 36, 48, 49, 57, 58, 62, 63
+};
 
-    *bmp_buffer = (unsigned char *)malloc(size_bmp);
-    unsigned char *rowptr[1];
-    while (cinfo_p->output_scanline < height) {
-        rowptr[0] = *bmp_buffer + cinfo_p->output_scanline * width * pixel_size;
-        jpeg_read_scanlines(cinfo_p, rowptr, 1);
-    }
-    jpeg_finish_decompress(cinfo_p);
-    return 0;
-}
 
-// Build Huffman Tree
-HuffmanNode* createHuffmanTree(int freq_table[256]) {
-    HuffmanNode* nodes[256];
-    int node_count = 0;
+static int bitstream_index = 0;
 
-    // Initialize nodes
-    for(int i = 0; i < 256; i++) {
-        if(freq_table[i] > 0) {
-            nodes[node_count] = (HuffmanNode*)malloc(sizeof(HuffmanNode));
-            nodes[node_count]->value = i;
-            nodes[node_count]->freq = freq_table[i];
-            nodes[node_count]->left = nodes[node_count]->right = NULL;
-            node_count++;
-        }
-    }
-
-    // Build the tree (always look for the 2 smallest value and put then into a tree)
-    while(node_count > 1) {
-        // Find two nodes with the smallest frequencies
-        int min1 = 0, min2 = 1;
-        if(nodes[min2]->freq < nodes[min1]->freq) {
-            min1 = 1;
-            min2 = 0;
-        }
-
-        for(int i = 2; i < node_count; i++) {
-            if(nodes[i]->freq < nodes[min1]->freq) {
-                min2 = min1;
-                min1 = i;
-            } else if (nodes[i]->freq < nodes[min2]->freq) {
-                min2 = i;
-            }
-        }
-
-        // Merge nodes[min1] and nodes[min2]
-        HuffmanNode* merged = (HuffmanNode *)malloc(sizeof(HuffmanNode));
-        merged->freq = nodes[min1]->freq + nodes[min2]->freq;
-        merged->value = -1;
-        merged->left = nodes[min1];
-        merged->right = nodes[min2];
-
-        // Replace the two nodes with the merged node
-        nodes[min1] = merged;
-        nodes[min2] = nodes[node_count - 1]; // Move the last node to min2
-        node_count--;
-    }
-    return nodes[0];
-}
-
-// Generate Huffman codes
-void generateHuffmanCodes(HuffmanCode huffman_table[], HuffmanNode* root, unsigned char *code, int length) {
-    if(!root->left && !root->right) {
-        huffman_table[root->value].bitlength = length;
-        memcpy(huffman_table[root->value].bitstring, code, (length + 7) / 8);
+// A dummy function to simulate bitstream writing
+void writeBits(uint8_t* bitstream_buffer, uint16_t bitstring, uint8_t bitlength) {
+    // Ensure the buffer has enough space
+    if(bitstream_index + (bitlength / 8) + 1 > MAX_BITSTREAM_SIZE) {
+        // printf("Buffer overflow detected!\n");
         return;
     }
-    if(root->left) {
-        code[length / 8] &= ~(1 << (7 - (length % 8))); // Set current bit to 0
-        generateHuffmanCodes(huffman_table, root->left, code, length + 1);
+
+    // Writing the bitstring to the buffer
+    for(int i = 0; i < bitlength; i++) {
+        int byte_pos = bitstream_index + (i / 8);
+        int bit_pos = 7 - (i % 8);
+        uint8_t bit = (bitstring >> (bitlength - i - 1)) & 1;
+        
+        if(bit == 1) {
+            bitstream_buffer[byte_pos] |= (1 << bit_pos);  // Set the bit
+        } else {
+            bitstream_buffer[byte_pos] &= ~(1 << bit_pos); // Clear the bit
+        }
     }
-    if(root->right) {
-        code[length / 8] |= (1 << (7 - (length % 8))); // Set current bit to 1
-        generateHuffmanCodes(huffman_table, root->right, code, length + 1);
-    }
+    bitstream_index += (bitlength + 7) / 8; // Update buffer index
 }
 
-// Encode data using Huffman codes
-void huffmanEncode(HuffmanCode huffman_table[], char *data, size_t size, FILE *outfile) {
-    for(size_t i = 0; i < size; i++) {
-        unsigned char symbol = data[i];
-        fwrite(huffman_table[symbol].bitstring, 1, (huffman_table[symbol].bitlength + 7) / 8, outfile);
+// Perform Huffman coding on the DCT coefficients
+void performHuffmanCoding(uint8_t* bitstream_buffer, double* mat, double previous_dc_coeffi) {
+    // 1. DC coefficient differential encoding
+    int dc_coeffi = round(mat[0]); // Current block's DC coefficient
+    int dc_diff = dc_coeffi - previous_dc_coeffi; // Difference
+    if(dc_diff == 0) {
+        dc_diff++;
     }
+    int dc_category = log2(abs(dc_diff)) + 1; // Category of the difference (MPEG standard)
+    if(dc_category > 11) dc_category = 11;  // Ensure the maximum category is 11
+    HuffmanCode dc_code = dc_huffman_table[dc_category];
+    writeBits(bitstream_buffer, dc_code.bitstring, dc_code.bitlength);
+
+    // 2. AC coefficients encoding
+    int run = 0; // Number of consecutive zeros
+    for(int i = 1; i < 64; i++) {
+        int index = zigzag_order[i];
+        int coeff = round(mat[index]);
+        
+        if(coeff == 0) {
+            run++;
+            if(run == 16) { // More than 16 zeros, write the special code for Run = 15
+                HuffmanCode zrl_code = ac_huffman_table[0x0f]; // Assume 0x0f represents 15 consecutive zeros
+                writeBits(bitstream_buffer, zrl_code.bitstring, zrl_code.bitlength);
+                run = 0;
+            }
+        } else {
+            int size = log2(abs(coeff)) + 1; // Magnitude of the non-zero coefficient
+            int run_size = (run << 4) | size; // Combination of run length and magnitude
+            HuffmanCode ac_code = ac_huffman_table[run_size];
+            writeBits(bitstream_buffer, ac_code.bitstring, ac_code.bitlength);
+            // Encode the actual coefficient
+            writeBits(bitstream_buffer, coeff, size);
+            run = 0; // Reset the number of consecutive zeros
+        }
+    }
+
+    // 3. Write End of Block (EOB)
+    HuffmanCode eob_code = ac_huffman_table[0x00];  // Assume 0x00 is EOB
+    writeBits(bitstream_buffer, eob_code.bitstring, eob_code.bitlength);
 }
 
 int main() {
-    // Read file
-    FILE* infile = fopen(INPUTFILENAME, "rb");
-    if(!infile) {
-        fprintf(stderr, "Error opening JPEG file %s!\n", INPUTFILENAME);
-        return EXIT_FAILURE;
+    // Example DCT coefficients (8x8 block) and previous DC coefficient
+    double mat[64] = {
+        54, 6, 7, 6, 5, 12, -4, -1,
+        -4, -1, -0, -0, -0, -1, 0, 0,
+        -4, 1, 0, 0, 0, 1, -0, -0,
+        -3, -0, -0, -0, -0, -0, 0, 0,
+        -5, 1, 0, 0, 0, 1, -0, -0,
+        2, -0, -0, -0, -0, -1, 1, 0,
+        0, 0, 0, 0, 0, 0, -0, -0
+    };
+    double previous_dc_coeffi = 1000.0; // Example previous DC coefficient
+
+    // Perform Huffman coding on the DCT coefficients
+    uint8_t bitstream_buffer[MAX_BITSTREAM_SIZE] = {0};
+    performHuffmanCoding(bitstream_buffer, mat, previous_dc_coeffi);
+
+    // Optionally print the bitstream buffer content (for testing)
+    printf("Bitstream buffer (in hex):\n");
+    for(int i = 0; i < bitstream_index; i++) {
+        printf("%02X ", bitstream_buffer[i]);
     }
+    printf("\n");
 
-    // Decompress JPEG to raw pixel data
-    struct jpeg_decompress_struct cinfo;
-    unsigned char *bmp_buffer = NULL;
-    decompressJPEG(&cinfo, &bmp_buffer, infile);
-    fclose(infile);
-
-    // Calculate frequency table
-    size_t size_bmp = cinfo.output_width * cinfo.output_height * cinfo.output_components;
-    int freq_table[256] = {0};
-    for(size_t i = 0; i < size_bmp; i++) {
-        freq_table[bmp_buffer[i]]++; // Everytime finding an element add one to the corresponding element in the frequency table.
-    }
-
-    // Build Huffman Tree and generate codes
-    HuffmanNode* root = createHuffmanTree(freq_table); // Dynamic
-    unsigned char code[32] = {0}; // Temporary buffer for bitstrings
-    HuffmanCode huffman_table[256]; // Variable for storing Huffman codes
-    generateHuffmanCodes(huffman_table, root, code, 0);
-
-    // Encode and save to file
-    FILE* outfile = fopen(OUTPUTFILENAME, "wb");
-    if(!outfile) {
-        fprintf(stderr, "Error opening output file %s!\n", OUTPUTFILENAME);
-        return EXIT_FAILURE;
-    }
-    huffmanEncode(huffman_table, bmp_buffer, size_bmp, outfile);
-    fclose(outfile);
-    free(bmp_buffer);
-
-    printf("Huffman encoding completed.\n");
     return 0;
 }

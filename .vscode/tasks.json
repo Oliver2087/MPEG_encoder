@@ -10,7 +10,12 @@
                 "${file}",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}",
+                "${workspaceFolder}/src/huffmancoding.c",
+                "-I",
+                "${workspaceFolder}/include",
                 "-fopenmp",
+                "-lavformat",
+                "-lavutil",
                 "-ljpeg",
                 "-lm"
                 
