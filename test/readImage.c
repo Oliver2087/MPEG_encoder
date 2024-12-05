@@ -6,15 +6,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/time.h>
+
 #include <jpeglib.h>
 
+#include <huffmancoding.h>
+
 #define INPUTFILENAME "../../data/Video1/Images/image0005.jpeg"
-#define OUTPUTFILENAME "../../data/Image5.bin"
-#define BLOCK_SIZE 16
+#define FILENAME_OUTPUT "output.mpeg"
+#define BLOCK_SIZE 8
 #define PI 3.1415927
 #define NUMOFLINESREADINONETIME 16
 
-int decompressJPEG(struct jpeg_decompress_struct* cinfo_p, unsigned char** bmp_buffer, FILE* infile) {
+const unsigned char quantization_table[BLOCK_SIZE][BLOCK_SIZE] = {
+    {16, 11, 10, 16, 24, 40, 51, 61},
+    {12, 12, 14, 19, 26, 58, 60, 55},
+    {14, 13, 16, 24, 40, 57, 69, 56},
+    {14, 17, 22, 29, 51, 87, 80, 62},
+    {18, 22, 37, 56, 68, 109, 103, 77},
+    {24, 35, 55, 64, 81, 104, 113, 92},
+    {49, 64, 78, 87, 103, 121, 120, 101},
+    {72, 92, 95, 98, 112, 100, 103, 99}
+};
+
+int decompressJPEG(struct jpeg_decompress_struct* cinfo_p, unsigned char** bmp_buffer, char* filename) {
+    FILE* infile = fopen(filename, "rb");
+    if(!infile) {
+        fprintf(stderr, "Error opening JPEG file %s!\n", filename);
+        exit(EXIT_FAILURE);
+    }
+    
     struct jpeg_error_mgr jerr;
     
     (*cinfo_p).err = jpeg_std_error(&jerr);
@@ -41,34 +61,35 @@ int decompressJPEG(struct jpeg_decompress_struct* cinfo_p, unsigned char** bmp_b
         jpeg_read_scanlines(cinfo_p, rowptr, lines_to_read);
     }
     jpeg_finish_decompress(cinfo_p);
+    fclose(infile);
     return 0;
 }
 
-void performFastDCT(double block[BLOCK_SIZE][BLOCK_SIZE]) {
-    double temp[BLOCK_SIZE][BLOCK_SIZE];
+void performFastDCT(double block[BLOCK_SIZE*BLOCK_SIZE]) {
+    double temp[BLOCK_SIZE*BLOCK_SIZE];
     double cu, cv;
 
     // 1D DCT on rows
     for(int u = 0; u < BLOCK_SIZE; u++) {
         for(int x = 0; x < BLOCK_SIZE; x++) {
-            temp[u][x] = 0;
+            temp[u*BLOCK_SIZE+x] = 0;
             cu = (u == 0) ? 1.0 / sqrt(2.0) : 1.0;
             for(int i = 0; i < BLOCK_SIZE; i++) {
-                temp[u][x] += block[u][i] * cos((2.0 * i + 1.0) * x * PI / (2.0 * BLOCK_SIZE));
+                temp[u*BLOCK_SIZE+x] += block[u*BLOCK_SIZE+i] * cos((2.0 * i + 1.0) * x * PI / (2.0 * BLOCK_SIZE));
             }
-            temp[u][x] *= 0.5 * cu;
+            temp[u*BLOCK_SIZE+x] *= 0.5 * cu;
         }
     }
 
     // 1D DCT on columns
     for(int v = 0; v < BLOCK_SIZE; v++) {
         for(int y = 0; y < BLOCK_SIZE; y++) {
-            block[y][v] = 0;
+            block[y*BLOCK_SIZE+v] = 0;
             cv = (v == 0) ? 1.0 / sqrt(2.0) : 1.0;
             for(int j = 0; j < BLOCK_SIZE; j++) {
-                block[y][v] += temp[j][v] * cos((2.0 * j + 1.0) * y * PI / (2.0 * BLOCK_SIZE));
+                block[y*BLOCK_SIZE+v] += temp[j*BLOCK_SIZE+v] * cos((2.0 * j + 1.0) * y * PI / (2.0 * BLOCK_SIZE));
             }
-            block[y][v] *= 0.5 * cv;
+            block[y*BLOCK_SIZE+v] *= 0.5 * cv;
         }
     }
 }
@@ -109,89 +130,70 @@ void performDCT(double block[BLOCK_SIZE][BLOCK_SIZE]) {
     }
 }
 
-void quantizeBlock(double block[BLOCK_SIZE][BLOCK_SIZE], const unsigned char quant_table[BLOCK_SIZE][BLOCK_SIZE]) {
+void quantizeBlock(double block[BLOCK_SIZE*BLOCK_SIZE]) {
     for(int i = 0; i < BLOCK_SIZE; i++) {
         for(int j = 0; j < BLOCK_SIZE; j++) {
-            block[i][j] = round(block[i][j] / quant_table[i][j]);
+            block[i*BLOCK_SIZE+j] = round(block[i*BLOCK_SIZE+j] / quantization_table[i][j]);
         }
     }
 }
 
-int performIntraframCompression(int width, int height, unsigned char* bmp_buffer, int num_blocks) {
-    // Establish the dynamic display
-    int i_CurrentBlock = 0;
-    printf("Processing blocks: 0/%d", num_blocks);
-    fflush(stdout); // Ensure the output is flushed to the terminal
+// Write the sequence header of the mpeg file
+// bit_rate: choose one of the following:
+//     1: 23.976 fps
+//     2: 24 fps
+//     3: 25 fps
+//     4: 29.97 fps
+//     5: 30 fps
+//     6: 50 fps
+//     7: 59.94 fps
+//     8: 60 fps
+void writeSequenceHeader(FILE* file_mpeg, int width, int height, int frame_rate_code, int bit_rate) {
+    unsigned char sequence_header[12];
 
-    // Process each 8x8 block in Y, Cb, and Cr
-    int x_block, y_block; // the index of blocks
+    // Start code for Sequence Header
+    sequence_header[0] = 0x00;
+    sequence_header[1] = 0x00;
+    sequence_header[2] = 0x01;
+    sequence_header[3] = 0xB3;
 
-    const unsigned char quantization_table[BLOCK_SIZE][BLOCK_SIZE] = {
-        {16, 11, 10, 16, 24, 40, 51, 61},
-        {12, 12, 14, 19, 26, 58, 60, 55},
-        {14, 13, 16, 24, 40, 57, 69, 56},
-        {14, 17, 22, 29, 51, 87, 80, 62},
-        {18, 22, 37, 56, 68, 109, 103, 77},
-        {24, 35, 55, 64, 81, 104, 113, 92},
-        {49, 64, 78, 87, 103, 121, 120, 101},
-        {72, 92, 95, 98, 112, 100, 103, 99}
-    };
+    // Resolution (12 bits for horizontal, 12 bits for vertical)
+    sequence_header[4] = (width >> 4) & 0xFF;                   // Higher 8 bits of horizontal size
+    sequence_header[5] = ((width & 0x0F) << 4) | ((height >> 8) & 0x0F); // Lower 4 bits of horizontal and higher 4 bits of vertical
+    sequence_header[6] = height & 0xFF;                         // Lower 8 bits of vertical size
 
-    #pragma omp parallel for collapse(2) // Parallelize two nested loops
+    // Frame rate and bit rate
+    sequence_header[7] = (bit_rate >> 10) & 0xFF;               // Higher 8 bits of bit rate
+    sequence_header[8] = (bit_rate >> 2) & 0xFF;                // Middle 8 bits of bit rate
+    sequence_header[9] = ((bit_rate & 0x03) << 6) | 0x3F;       // Lower 2 bits of bit rate and VBV buffer size
 
-    for(y_block = 0; y_block < height / BLOCK_SIZE; y_block++) {
-        for(x_block = 0; x_block < width / BLOCK_SIZE; x_block++) {
-            i_CurrentBlock++;
-            // Dynamic progress update
-            printf("\rProcessing blocks: %d/%d", i_CurrentBlock, num_blocks);
-            fflush(stdout);
-            // Extract 8x8 block for Y, Cb, and Cr
-            double ym[BLOCK_SIZE][BLOCK_SIZE]; // the Y matrix for this block
-            double cbm[BLOCK_SIZE][BLOCK_SIZE]; // the CB matrix for this block
-            double crm[BLOCK_SIZE][BLOCK_SIZE]; // the CR matrix for this block
-            // Copy Y, Cb, Cr values into blocks (this assumes YCbCr format)
-            for(int y = 0; y < BLOCK_SIZE; y++) {
-                for(int x = 0; x < BLOCK_SIZE; x++) {
-                    ym[y][x] = bmp_buffer[
-                        (y_block * BLOCK_SIZE + y) * width + 
-                        (x_block * BLOCK_SIZE + x)
-                    ];
-                    cbm[y][x] = bmp_buffer[
-                        width * height + 
-                        (y_block * BLOCK_SIZE + y) * (width / 2) + 
-                        (x_block * BLOCK_SIZE + x) / 2
-                    ];         // CB and CR matrix is after the Y matrix, 
-                    crm[y][x] = bmp_buffer[
-                        width * height * 5 / 4 + 
-                        (y_block * BLOCK_SIZE + y) * (width / 2) + 
-                        (x_block * BLOCK_SIZE + x) / 2
-                    ]; // in YUV420 the C matrices has half height and width as Y matrix
-                }
-            }
+    // Frame rate code and marker bits
+    sequence_header[10] = (frame_rate_code & 0x0F) << 4;        // Frame rate code (4 bits)
+    sequence_header[11] = 0xFF;                                 // Marker bits
 
-            // Apply DCT, quatization and Huffman encoding to the blocks
-            performFastDCT(ym);
-            quantizeBlock(ym, quantization_table);
-            performFastDCT(cbm);
-            quantizeBlock(cbm, quantization_table);
-            performFastDCT(crm);
-            quantizeBlock(crm, quantization_table);
-        }
-    }
-    printf("\n");
+    // Write Sequence Header to file
+    fwrite(sequence_header, 1, sizeof(sequence_header), file_mpeg);
 }
 
-void readJPEGFile(const char *filename) {
-    FILE* infile = fopen(filename, "rb");
-    if(!infile) {
-        fprintf(stderr, "Error opening JPEG file %s!\n", filename);
-        exit(EXIT_FAILURE);
-    }
+// Calculate the bitrate based on an empirical formula (unit: 400Kbps)
+int calculateBitRate(int width, int height, int frame_rate) {
+    // rate_factor is an empirical parameter, typically between 0.1 and 0.3
+    double rate_factor = 0.2; // Adjust this parameter according to the desired quality
+    int bit_rate = (int)(width * height * frame_rate * rate_factor / 1000 / 400);
+    return bit_rate; // Return the bitrate in Kbps
+}
 
+unsigned char picture_header[] = {
+    0x00, 0x00, 0x01, 0x00,  // Start code for picture header
+    0x00, 0x01,              // Temporal reference
+    0x80                     // Picture type (I-frame)
+};
+
+void doIntraframeCompression(char* filename_o, char* filename_i) {
     // decompress the image and get the information
     struct jpeg_decompress_struct cinfo;
     unsigned char* bmp_buffer = NULL;
-    decompressJPEG(&cinfo, &bmp_buffer, infile);
+    decompressJPEG(&cinfo, &bmp_buffer, filename_i);
 
     // Check whether the data is in yuv
     printf("Number of components: %d\n", cinfo.num_components); // Check the number of th components.
@@ -208,26 +210,73 @@ void readJPEGFile(const char *filename) {
     int width = cinfo.output_width;
     int height = cinfo.output_height;
     int pixel_size = cinfo.output_components;
-    int num_blocks_x = width / BLOCK_SIZE;    // Number of blocks in X direction
-    int num_blocks_y = height / BLOCK_SIZE;   // Number of blocks in Y direction
-    int num_blocks = num_blocks_x * num_blocks_y;
     // 图片数据已在 bmp_buffer 中，可进一步处理
     printf("Image width: %d, height: %d, pixel size: %d\n", width, height, pixel_size);
     jpeg_destroy_decompress(&cinfo);
-    fclose(infile);
 
-    performIntraframCompression(width, height, bmp_buffer, num_blocks);
+    FILE* file_mpeg = fopen(filename_o, "wb");
+    writeSequenceHeader(file_mpeg, width, height, 5, calculateBitRate(width, height, 30));
+    // Write picture header
+    fwrite(picture_header, 1, sizeof(picture_header), file_mpeg);
 
-    FILE* outfile = fopen(OUTPUTFILENAME, "wb");
-    if(!outfile) {
-        perror("Error: Failed to open the output file.");
-        exit(EXIT_FAILURE);
+    // Establish the dynamic display
+    // int i_CurrentBlock = 0;
+    // printf("Processing blocks: 0/%d", num_blocks);
+    // fflush(stdout); // Ensure the output is flushed to the terminal
+
+    // Process each 8x8 block in Y, Cb, and Cr
+    double prev_dc_coeffi_y = 0.0;
+    double prev_dc_coeffi_cb = 0.0;
+    double prev_dc_coeffi_cr = 0.0;
+    #pragma omp parallel for collapse(2) // Parallelize two nested loops
+    for(int y_block = 0; y_block < height / BLOCK_SIZE; y_block++) {
+        for(int x_block = 0; x_block < width / BLOCK_SIZE; x_block++) {
+            // i_CurrentBlock++;
+            // Dynamic progress update
+            // printf("\rProcessing blocks: %d/%d", i_CurrentBlock, num_blocks);
+            // fflush(stdout);
+
+            // Use 1D arrays instead of 2D arrays
+            double ym[BLOCK_SIZE * BLOCK_SIZE];  // Y matrix for this block
+            double cbm[BLOCK_SIZE * BLOCK_SIZE]; // Cb matrix for this block
+            double crm[BLOCK_SIZE * BLOCK_SIZE]; // Cr matrix for this block
+
+            // Copy Y, Cb, Cr values into 1D arrays (this assumes YCbCr format)
+            for(int y = 0; y < BLOCK_SIZE; y++) {
+                for(int x = 0; x < BLOCK_SIZE; x++) {
+                    ym[y * BLOCK_SIZE + x] = bmp_buffer[ 
+                        (y_block * BLOCK_SIZE + y) * width + 
+                        (x_block * BLOCK_SIZE + x)
+                    ];
+
+                    cbm[y * BLOCK_SIZE + x] = bmp_buffer[ 
+                        width * height + 
+                        (y_block * BLOCK_SIZE + y) * (width / 2) + 
+                        (x_block * BLOCK_SIZE + x) / 2
+                    ];
+
+                    crm[y * BLOCK_SIZE + x] = bmp_buffer[ 
+                        width * height * 5 / 4 + 
+                        (y_block * BLOCK_SIZE + y) * (width / 2) + 
+                        (x_block * BLOCK_SIZE + x) / 2
+                    ];
+                }
+            }
+
+            // Apply DCT, quantization and Huffman encoding to the blocks
+            performFastDCT(ym);
+            quantizeBlock(ym);
+            performFastDCT(cbm);
+            quantizeBlock(cbm);
+            performFastDCT(crm);
+            quantizeBlock(crm);
+
+            prev_dc_coeffi_y = ym[0]; // First element (DC coefficient for Y)
+            prev_dc_coeffi_cb = cbm[0]; // First element (DC coefficient for Cb)
+            prev_dc_coeffi_cr = crm[0]; // First element (DC coefficient for Cr)
+        }
     }
-
-    fwrite(bmp_buffer, sizeof(unsigned char), width * height * pixel_size, outfile);
-    fclose(outfile);
-
-    free(bmp_buffer); // 处理完后释放内存
+    fclose(file_mpeg);
 }
 
 int main() {
@@ -235,7 +284,7 @@ int main() {
     
     gettimeofday(&start, NULL);
 
-    readJPEGFile(INPUTFILENAME);
+    doIntraframeCompression(FILENAME_OUTPUT, INPUTFILENAME);
 
     gettimeofday(&end, NULL);
     

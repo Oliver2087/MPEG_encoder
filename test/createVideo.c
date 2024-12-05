@@ -1,82 +1,52 @@
-#include <stdint.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 
-#define OUTPUTFILENAME "output.mpg"
-
-// MPEG-1 file header structure
-typedef struct {
-    uint32_t mpeg_header;  // File header identifier
-    uint32_t video_stream_header;  // Video stream header
-    uint32_t audio_stream_header;  // Audio stream header
-} MpegFileHeader;
-
-// Video frame header structure
-typedef struct {
-    uint8_t frame_type;  // Frame type (I-frame, P-frame, etc.)
-    uint32_t timestamp;  // Timestamp for the frame
-} FrameHeader;
-
-// Video frame structure
-typedef struct {
-    FrameHeader header;  // Frame header
-    uint8_t* encoded_data;  // Encoded frame data
-} VideoFrame;
-
-// Write MPEG file header
-void writeMPEGFileHeader(FILE *file) {
-    MpegFileHeader header = {0x000001BA, 0x000001B3, 0};  // Simplified file header
-    fwrite(&header, sizeof(MpegFileHeader), 1, file);
+// Write the pack header
+void writePackHeader(FILE *file) {
+    uint8_t pack_header[14] = {
+        0x00, 0x00, 0x01, 0xBA,  // 起始码
+        0x44, 0x00, 0x04, 0x00,  // 系统时钟参考（模拟值）
+        0x04, 0x01, 0x1F, 0xFF,  // SCR 扩展（模拟值）和比特率
+        0xF8                       // 结束标志
+    };
+    fwrite(pack_header, 1, sizeof(pack_header), file);
 }
 
-// Write video stream header
-void writeVideoStreamHeader(FILE *file) {
-    uint8_t video_stream_header[] = {0x00, 0x00, 0x01, 0xB3};  // MPEG-1 video stream header (simplified)
-    fwrite(video_stream_header, sizeof(video_stream_header), 1, file);
+// Write the system header
+void writeSystemHeader(FILE *file) {
+    uint8_t system_header[18] = {
+        0x00, 0x00, 0x01, 0xBB,  // 起始码
+        0x00, 0x0C,              // 长度
+        0x80, 0xC4, 0x0D, 0x00,  // 标志位和固定值
+        0x00, 0x00, 0x01, 0xE0,  // 视频流起始码
+        0x00, 0x0F,              // 缓冲区大小（模拟值）
+        0xE0, 0x00               // 结束标志
+    };
+    fwrite(system_header, 1, sizeof(system_header), file);
 }
 
-// Create MPEG-1 file and write video stream
-void createMPEGFile(VideoFrame* frames, size_t num_frames) {
-    FILE* file = fopen(OUTPUTFILENAME, "wb");
+// Write the empty video packet.
+void writeEmptyVideoPacket(FILE *file) {
+    uint8_t video_packet[6] = {
+        0x00, 0x00, 0x01, 0xE0,  // 视频流起始码
+        0x00, 0x00               // 包长度为0
+    };
+    fwrite(video_packet, 1, sizeof(video_packet), file);
+}
+
+int main() {
+    FILE* file = fopen("empty.mpg", "wb");
     if(!file) {
-        perror("Error: Failed to open file");
-        exit(EXIT_FAILURE);
+        perror("Failed to open file");
+        return EXIT_FAILURE;
     }
 
-    // Write file header
-    writeMPEGFileHeader(file);
-
-    // Write video stream header
-    writeVideoStreamHeader(file);
-
-    // Process and write each frame
-    for(size_t i = 0; i < num_frames; ++i) {
-        VideoFrame* frame = frames + i;
-        fwrite(&frame->header, sizeof(FrameHeader), 1, file); // Write frame header
-        fwrite(frame->encoded_data, 1024, 1, file); // Write encoded frame data
-    }
+    writePackHeader(file);       // Write the pack header.
+    writeSystemHeader(file);     // 写入 System Header
+    // writeEmptyVideoPacket(file); // 写入空视频包
 
     fclose(file);
-}
-
-// Main function example
-int main() {
-    // Create some test frames
-    VideoFrame frames[10];
-    for(int i = 0; i < 10; i++) {
-        frames[i].header.frame_type = 0x01;  // Assuming it's an I-frame
-        frames[i].header.timestamp = i * 1000;  // Increment timestamp by 1000 for each frame
-        frames[i].encoded_data = (uint8_t*)malloc(1024);  // Assuming each frame has 1024 bytes of encoded data
-        // Here, you would fill in the encoded data for each frame
-    }
-
-    // Create MPEG-1 file
-    createMPEGFile(frames, 10);
-
-    // Free resources
-    for(int i = 0; i < 10; i++) {
-        free(frames[i].encoded_data);
-    }
-
+    printf("Empty MPEG-1 file 'empty.mpg' generated successfully.\n");
     return 0;
 }
