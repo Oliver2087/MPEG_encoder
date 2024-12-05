@@ -85,7 +85,9 @@ void performHuffmanCoding(uint8_t* bitstream_buffer, double* mat, double previou
         dc_diff++;
     }
     int dc_category = log2(abs(dc_diff)) + 1; // Category of the difference (MPEG standard)
-    if(dc_category > 11) dc_category = 11;  // Ensure the maximum category is 11
+    if(dc_category > 11) {
+        dc_category = 11;  // Ensure the maximum category is 11
+    }
     HuffmanCode dc_code = dc_huffman_table[dc_category];
     writeBits(bitstream_buffer, dc_code.bitstring, dc_code.bitlength);
 

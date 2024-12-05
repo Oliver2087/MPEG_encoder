@@ -1,6 +1,3 @@
-// gcc -o readImage readImage.c -ljpeg
-// ./readImage
-
 #include <math.h>
 #include <omp.h>
 #include <stdio.h>

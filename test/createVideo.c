@@ -5,7 +5,7 @@
 // Write the pack header
 void writePackHeader(FILE *file) {
     uint8_t pack_header[14] = {
-        0x00, 0x00, 0x01, 0xBA,  // 起始码
+        0x00, 0x00, 0x01, 0xBA,  // starting code
         0x44, 0x00, 0x04, 0x00,  // 系统时钟参考（模拟值）
         0x04, 0x01, 0x1F, 0xFF,  // SCR 扩展（模拟值）和比特率
         0xF8                       // 结束标志
