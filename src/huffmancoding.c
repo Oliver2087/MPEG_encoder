@@ -43,69 +43,70 @@ const int zigzag_order[64] = {
     35, 36, 48, 49, 57, 58, 62, 63
 };
 
-static int bitstream_index = 0;
-
 // A dummy function to simulate bitstream writing
-void writeBits(uint8_t* bitstream_buffer, uint16_t bitstring, uint8_t bitlength) {
+void writeBits(uint8_t* bitstream_buffer, int* bitstream_index_p, uint16_t bitstring, uint8_t bitlength) {
     // Ensure the buffer has enough space
-    if (bitstream_index + (bitlength / 8) + 1 > MAX_BITSTREAM_SIZE) {
-        printf("Buffer overflow detected!\n");
+    if(*bitstream_index_p + (bitlength / 8) + 1 > MAX_BITSTREAM_SIZE) {
+        // printf("Buffer overflow detected!\n");
         return;
     }
 
     // Writing the bitstring to the buffer
-    for (int i = 0; i < bitlength; i++) {
-        int byte_pos = bitstream_index + (i / 8);
+    for(int i = 0; i < bitlength; i++) {
+        int byte_pos = *bitstream_index_p + (i / 8);
         int bit_pos = 7 - (i % 8);
         uint8_t bit = (bitstring >> (bitlength - i - 1)) & 1;
         
-        if (bit == 1) {
+        if(bit == 1) {
             bitstream_buffer[byte_pos] |= (1 << bit_pos);  // Set the bit
         } else {
             bitstream_buffer[byte_pos] &= ~(1 << bit_pos); // Clear the bit
         }
     }
-    bitstream_index += (bitlength + 7) / 8; // Update buffer index
+    *bitstream_index_p += (bitlength + 7) / 8; // Update buffer index
 }
 
 // Perform Huffman coding on the DCT coefficients
-void performHuffmanCoding(uint8_t* bitstream_buffer, double* mat, double previous_dc_coeffi) {
+void performHuffmanCoding(uint8_t* bitstream_buffer, int* bitstream_index_p, double* mat, double previous_dc_coeffi) {
+    *bitstream_index_p = 0;
     // 1. DC coefficient differential encoding
     int dc_coeffi = round(mat[0]); // Current block's DC coefficient
     int dc_diff = dc_coeffi - previous_dc_coeffi; // Difference
-    if (dc_diff == 0) {
+    if(dc_diff == 0) {
         dc_diff++;
     }
     int dc_category = log2(abs(dc_diff)) + 1; // Category of the difference (MPEG standard)
-    if (dc_category > 11) dc_category = 11;  // Ensure the maximum category is 11
+    if(dc_category > 11) {
+        dc_category = 11;  // Ensure the maximum category is 11
+    }
     HuffmanCode dc_code = dc_huffman_table[dc_category];
-    writeBits(bitstream_buffer, dc_code.bitstring, dc_code.bitlength);
+    writeBits(bitstream_buffer, bitstream_index_p, dc_code.bitstring, dc_code.bitlength);
 
     // 2. AC coefficients encoding
     int run = 0; // Number of consecutive zeros
-    for (int i = 1; i < 64; i++) {
+    for(int i = 1; i < 64; i++) {
         int index = zigzag_order[i];
         int coeff = round(mat[index]);
         
-        if (coeff == 0) {
+        if(coeff == 0) {
             run++;
-            if (run == 16) { // More than 16 zeros, write the special code for Run = 15
+            if(run == 16) { // More than 16 zeros, write the special code for Run = 15
                 HuffmanCode zrl_code = ac_huffman_table[0x0f]; // Assume 0x0f represents 15 consecutive zeros
-                writeBits(bitstream_buffer, zrl_code.bitstring, zrl_code.bitlength);
+                writeBits(bitstream_buffer, bitstream_index_p, zrl_code.bitstring, zrl_code.bitlength);
                 run = 0;
             }
         } else {
             int size = log2(abs(coeff)) + 1; // Magnitude of the non-zero coefficient
             int run_size = (run << 4) | size; // Combination of run length and magnitude
             HuffmanCode ac_code = ac_huffman_table[run_size];
-            writeBits(bitstream_buffer, ac_code.bitstring, ac_code.bitlength);
+            writeBits(bitstream_buffer, bitstream_index_p, ac_code.bitstring, ac_code.bitlength);
             // Encode the actual coefficient
-            writeBits(bitstream_buffer, coeff, size);
+            writeBits(bitstream_buffer, bitstream_index_p, coeff, size);
             run = 0; // Reset the number of consecutive zeros
         }
     }
 
     // 3. Write End of Block (EOB)
     HuffmanCode eob_code = ac_huffman_table[0x00];  // Assume 0x00 is EOB
-    writeBits(bitstream_buffer, eob_code.bitstring, eob_code.bitlength);
+    writeBits(bitstream_buffer, bitstream_index_p, eob_code.bitstring, eob_code.bitlength);
 }

@@ -22,6 +22,6 @@ extern HuffmanCode ac_huffman_table[];
 extern const int zigzag_order[64];
 
 // Function prototypes
-void writeBits(uint8_t* bitstream_buffer, uint16_t bitstring, uint8_t bitlength);
-void performHuffmanCoding(uint8_t* bitstream_buffer, double* mat, double previous_dc_coeffi);
+void writeBits(uint8_t* bitstream_buffer, int* bitstream_index_p, uint16_t bitstring, uint8_t bitlength);
+void performHuffmanCoding(uint8_t* bitstream_buffer, int* bitstream_index_p, double* mat, double previous_dc_coeffi);
 #endif // HUFFMAN_ENCODING_H
