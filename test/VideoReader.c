@@ -1,7 +1,7 @@
 #include <libavformat/avformat.h>
 #include <stdio.h>
 
-#define FILENAME "/home/qiangch2001/projects/data/images/output.mpg"//"/home/qiangch2001/projects/data/images/output.mpg"//"/home/qiangch2001/projects/MPEG_encoder/test/output.mpg"
+#define FILENAME "/home/qiangch2001/projects/MPEG_encoder/test/output.mpeg"//"/home/qiangch2001/projects/data/images/output.mpg"//"/home/qiangch2001/projects/MPEG_encoder/test/output.mpg"
 
 int main() {
     int ex = 1;

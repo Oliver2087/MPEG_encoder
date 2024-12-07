@@ -238,13 +238,13 @@ void writeSequenceHeader(FILE* file_mpeg, uint16_t width, uint16_t height) {
     sequence_header[2] = 0x01;
     sequence_header[3] = 0xB3;
 
-    sequence_header[4] = width >> 1;
-    sequence_header[5] = ((width & 0xF) << 1) | (height >> 2);
+    sequence_header[4] = width >> 4;
+    sequence_header[5] = ((width & 0xF) << 1) | (height >> 8);
     sequence_header[6] = height & 0xFF;
 
-    sequence_header[7] = 0x15;
-    sequence_header[8] = 0xFF;
-    sequence_header[9] = 0xFF;
+    sequence_header[7] = 0x15; // 0100 0000
+    sequence_header[8] = 0xFF; // 0001 1100
+    sequence_header[9] = 0xFF; // 0111 0000
     uint16_t size_buf = (uint16_t)(width * height * 1.5) + 1;
     sequence_header[10] = 0xE0 | (size_buf >> 5);
     sequence_header[11] = ((size_buf & 0x1F) << 3) | 0x00;
