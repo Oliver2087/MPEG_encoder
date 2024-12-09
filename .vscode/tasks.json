@@ -12,6 +12,7 @@
                 "${fileDirname}/${fileBasenameNoExtension}",
                 "${workspaceFolder}/src/mpeg1_encoder.c",
                 "${workspaceFolder}/src/readImage.c",
+                "${workspaceFolder}/src/createMLV.c",
                 "-I",
                 "${workspaceFolder}/include",
                 "-fopenmp",
