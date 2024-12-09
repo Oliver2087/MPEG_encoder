@@ -63,11 +63,16 @@ const int zigzag_scan[64] = {
     31, 39, 46, 53, 54, 47, 55, 56, 57, 58, 59, 60, 61, 62, 63
 };
 
-// Helper function to get the DC coefficient Huffman code and bits
-void encode_dc(int dc_val, const uint16_t* code_table, const unsigned char* bit_table, int* code, int* bits) {
-    int category = dc_val < 0 ? -dc_val : dc_val;  // Absolute value for category
+// Helper function to encode the DC coefficient with differential encoding
+void encode_dc(int dc_val, int prev_dc_val, const uint16_t* code_table, const unsigned char* bit_table, int* code, int* bits) {
+    // Compute the difference (delta) between the current and previous DC value
+    int diff_dc = dc_val - prev_dc_val;
+
+    // Determine the category of the difference value (absolute value)
+    int category = diff_dc < 0 ? -diff_dc : diff_dc;  // Absolute value for category
     if (category > 11) category = 11;  // Limit to the max category (12 categories)
 
+    // Encode the difference using Huffman code based on category
     *code = code_table[category];
     *bits = bit_table[category];
 }
@@ -89,44 +94,80 @@ void encode_ac(int ac_val, int* code, int* bits) {
 }
 
 // Function to encode the 8x8 matrix with Zigzag scan order and write to the buffer
-int encode_mpeg1(uint8_t *matrix, uint8_t *buffer) {
+int encode_mpeg1_y(uint8_t *matrix, uint8_t *buffer, int prev_dc) {
     int buffer_index = 0;
     int dc_code, dc_bits;
     int ac_code, ac_bits;
-    int run_length = 0;  // 用于RLE的计数器
+    int run_length = 0;  // RLE counter
 
-    // Zigzag scan the 8x8 matrix and encode DC and AC coefficients
-    encode_dc(matrix[zigzag_scan[0]], ff_mpeg12_vlc_dc_lum_code, ff_mpeg12_vlc_dc_lum_bits, &dc_code, &dc_bits);
-    buffer[buffer_index++] = (uint8_t)(dc_code & 0xFF);  // Write code byte
-    buffer[buffer_index++] = (uint8_t)(dc_bits);         // Write number of bits
+    // Encode the DC coefficient with differential encoding
+    encode_dc(matrix[zigzag_scan[0]], prev_dc, ff_mpeg12_vlc_dc_lum_code, ff_mpeg12_vlc_dc_lum_bits, &dc_code, &dc_bits);
+    buffer[buffer_index++] = (uint8_t)(dc_code);
+    buffer_index += dc_bits / 8;  // Adjust for bit length
 
-    // Encode the AC coefficients (remaining values in the matrix, in Zigzag order)
+    // Encode AC coefficients (run-length encoding)
     for (int i = 1; i < 64; i++) {
-        int zigzag_index = zigzag_scan[i];
-        if (matrix[zigzag_index] == 0) {
-            run_length++;  // 增加零的计数
+        int ac_val = matrix[zigzag_scan[i]];
+        encode_ac(ac_val, &ac_code, &ac_bits);
+        
+        if (ac_val == 0) {
+            run_length++;
         } else {
-            // 如果不是零，先编码所有的零（如果有的话）
-            while (run_length > 15) {
-                buffer[buffer_index++] = 0xF0;  // 代表15个零
-                buffer[buffer_index++] = 0x0;   // 代码字节
-                buffer[buffer_index++] = 4;     // 编码长度
-                run_length -= 15;
+            if (run_length > 15) {
+                // Handle large run-length (escaping sequence)
+                buffer[buffer_index++] = 0x01;
+                buffer[buffer_index++] = 0x00;
+                run_length = 0;
             }
-            // 编码当前非零系数
-            encode_ac(matrix[zigzag_index], &ac_code, &ac_bits);
-            buffer[buffer_index++] = (uint8_t)(ac_code & 0xFF);  // Write code byte
-            buffer[buffer_index++] = (uint8_t)(ac_bits);         // Write number of bits
+            
+            buffer[buffer_index++] = (uint8_t)(ac_code);
+            buffer_index += ac_bits / 8;
+            run_length = 0;  // Reset RLE counter
         }
     }
-    // 在编码结束时加入EOB标记
-    if (run_length > 0) {
-        buffer[buffer_index++] = 0x00;  // EOB (End of Block)
-        buffer[buffer_index++] = 1;     // 编码长度
+
+    // Return total number of bytes written to the buffer
+    return buffer_index;
+}
+
+
+// Function to encode the 8x8 matrix with Zigzag scan order and write to the buffer
+int encode_mpeg1_c(uint8_t *matrix, uint8_t *buffer, int prev_dc) {
+    int buffer_index = 0;
+    int dc_code, dc_bits;
+    int ac_code, ac_bits;
+    int run_length = 0;  // RLE counter
+
+    // Encode the DC coefficient with differential encoding
+    encode_dc(matrix[zigzag_scan[0]], prev_dc, ff_mpeg12_vlc_dc_chroma_code, ff_mpeg12_vlc_dc_chroma_bits, &dc_code, &dc_bits);
+    buffer[buffer_index++] = (uint8_t)(dc_code);
+    buffer_index += dc_bits / 8;  // Adjust for bit length
+
+    // Encode AC coefficients (run-length encoding)
+    for (int i = 1; i < 64; i++) {
+        int ac_val = matrix[zigzag_scan[i]];
+        encode_ac(ac_val, &ac_code, &ac_bits);
+        
+        if (ac_val == 0) {
+            run_length++;
+        } else {
+            if (run_length > 15) {
+                // Handle large run-length (escaping sequence)
+                buffer[buffer_index++] = 0x01;
+                buffer[buffer_index++] = 0x00;
+                run_length = 0;
+            }
+            
+            buffer[buffer_index++] = (uint8_t)(ac_code);
+            buffer_index += ac_bits / 8;
+            run_length = 0;  // Reset RLE counter
+        }
     }
 
-    return buffer_index;  // 返回写入缓冲区的字节数
+    // Return total number of bytes written to the buffer
+    return buffer_index;
 }
+
 
 int main() {
     // 示例：8x8矩阵（已经经过DCT和量化）
@@ -141,7 +182,8 @@ int main() {
     };
 
     uint8_t buffer[2000];
-    int length = encode_mpeg1(matrix, buffer);
+    int pre = 0;
+    int length = encode_mpeg1_y(matrix, buffer, pre);
 
     printf("Encoded data length: %d bytes\n", length);
     // 可选：打印编码后的数据（调试时使用）
