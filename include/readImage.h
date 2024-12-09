@@ -1,5 +1,6 @@
 #ifndef READIMAGE_H
 #define READIMAGE_H
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 

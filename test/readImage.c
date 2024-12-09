@@ -1,7 +1,7 @@
 #include "readImage.h"
 
 #define FILENAME "../../data/Video1/Images/image0005.jpeg"
-#define FILENAME_OUTPUT "output.raw"
+#define FILENAME_OUTPUT "output.bmp"
 
 int main() {
     ImageInfo imageinfo;

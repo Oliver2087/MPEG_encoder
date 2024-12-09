@@ -13,6 +13,7 @@
                 "${workspaceFolder}/src/mpeg1_encoder.c",
                 "${workspaceFolder}/src/readImage.c",
                 "${workspaceFolder}/src/createMLV.c",
+                "${workspaceFolder}/src/seperateMatrix.c",
                 "-I",
                 "${workspaceFolder}/include",
                 "-fopenmp",
