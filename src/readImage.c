@@ -1,5 +1,8 @@
 #include "readImage.h"
 
+#define FPS 30
+#define BITRATEPAR 100
+
 void transferrRgb2Yuv420(unsigned char *yuv,unsigned char *rgb, int width, int height) {
     int frame_size = width * height + (width / 2) * (height / 2) * 2;
     int i, j;
@@ -66,6 +69,9 @@ int readImage(ImageInfo* imageinfo, char* filename) {
     imageinfo->buf_p = (uint8_t*)malloc(imageinfo->buf_size);
     transferrRgb2Yuv420(imageinfo->buf_p, buf_rgb, imageinfo->width, imageinfo->height);
     free(buf_rgb);
+
+    imageinfo->fps = FPS;
+    imageinfo->bitrate = imageinfo->width * imageinfo->height * imageinfo->fps * BITRATEPAR;
 
     // 图片数据已在 bmp_buffer 中，可进一步处理
     printf("Image width: %d, height: %d, pixel size: %d\n", imageinfo->width, imageinfo->height, pixel_size);

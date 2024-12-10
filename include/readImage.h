@@ -13,6 +13,8 @@ typedef struct ImageInfo {
     int width;
     int height;
     size_t buf_size;
+    uint16_t fps;
+    int bitrate; // kbps
 } ImageInfo;
 
 int readImage(ImageInfo* imageinfo, char* filename);

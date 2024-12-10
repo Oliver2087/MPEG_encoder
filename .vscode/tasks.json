@@ -15,13 +15,15 @@
                 "${workspaceFolder}/src/createMLV.c",
                 "${workspaceFolder}/src/seperateMatrix.c",
                 "${workspaceFolder}/src/quantization.c",
+                "${workspaceFolder}/src/ffwt.c",
                 "-I",
                 "${workspaceFolder}/include",
                 "-fopenmp",
                 "-lavformat",
                 "-lavutil",
                 "-ljpeg",
-                "-lm"
+                "-lm",
+                "-lfftw3"
                 
             ],
             "options": {

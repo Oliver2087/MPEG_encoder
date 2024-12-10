@@ -5,6 +5,7 @@
 const uint16_t ff_mpeg12_vlc_dc_lum_code[12] = {
     0x4, 0x0, 0x1, 0x5, 0x6, 0xe, 0x1e, 0x3e, 0x7e, 0xfe, 0x1fe, 0x1ff,
 };
+
 const unsigned char ff_mpeg12_vlc_dc_lum_bits[12] = {
     3, 2, 2, 3, 3, 4, 5, 6, 7, 8, 9, 9,
 };
@@ -89,19 +90,21 @@ void encode_ac(int ac_val, int* code, int* bits) {
 }
 
 // Function to encode the 8x8 matrix with Zigzag scan order and write to the buffer
-int encode_mpeg1_y(uint8_t *matrix, uint8_t *buffer, int prev_dc) {
-    int buffer_index = 0;
+int encode_mpeg1(uint8_t* buffer, int matrix[64], int prev_dc, const uint16_t* huff_code, const unsigned char* huff_bits) {
+    int pos_bit = 0;
     int dc_code, dc_bits;
     int ac_code, ac_bits;
     int run_length = 0;  // RLE counter
 
     // Encode the DC coefficient with differential encoding
-    encode_dc(matrix[zigzag_scan[0]], prev_dc, ff_mpeg12_vlc_dc_lum_code, ff_mpeg12_vlc_dc_lum_bits, &dc_code, &dc_bits);
-    buffer[buffer_index++] = (uint8_t)(dc_code);
-    buffer_index += dc_bits / 8;  // Adjust for bit length
+    encode_dc(matrix[zigzag_scan[0]], prev_dc, huff_code, huff_bits, &dc_code, &dc_bits);
+    for (int i = dc_bits - 1; i >= 0; i--) {
+        buffer[pos_bit / 8] |= ((dc_code >> i) & 1) << (7 - (pos_bit % 8));
+        (pos_bit)++;
+    }
 
     // Encode AC coefficients (run-length encoding)
-    for (int i = 1; i < 64; i++) {
+    for(int i = 1; i < 64; i++) {
         int ac_val = matrix[zigzag_scan[i]];
         encode_ac(ac_val, &ac_code, &ac_bits);
         
@@ -110,55 +113,30 @@ int encode_mpeg1_y(uint8_t *matrix, uint8_t *buffer, int prev_dc) {
         } else {
             if (run_length > 15) {
                 // Handle large run-length (escaping sequence)
-                buffer[buffer_index++] = 0x01;
-                buffer[buffer_index++] = 0x00;
-                run_length = 0;
+                for(int j = 8 - 1; j >= 0; j--) {
+                    buffer[pos_bit / 8] |= ((0xF0 >> j) & 1) << (7 - (pos_bit % 8));
+                    (pos_bit)++;
+                }
+                run_length -=16;
             }
             
-            buffer[buffer_index++] = (uint8_t)(ac_code);
-            buffer_index += ac_bits / 8;
+            for(int j = ac_bits - 1; j >= 0; j--) {
+                buffer[pos_bit / 8] |= ((ac_code >> i) & 1) << (7 - (pos_bit % 8));
+                (pos_bit)++;
+            }
             run_length = 0;  // Reset RLE counter
         }
     }
 
     // Return total number of bytes written to the buffer
-    return buffer_index;
+    return (pos_bit + 7) / 8;  // Round up to full bytes
 }
 
 
-// Function to encode the 8x8 matrix with Zigzag scan order and write to the buffer
-int encode_mpeg1_c(uint8_t *matrix, uint8_t *buffer, int prev_dc) {
-    int buffer_index = 0;
-    int dc_code, dc_bits;
-    int ac_code, ac_bits;
-    int run_length = 0;  // RLE counter
+int encode_mpeg1_y(uint8_t* buffer, int matrix[64], int prev_dc) {
+    return encode_mpeg1(buffer, matrix, prev_dc, ff_mpeg12_vlc_dc_lum_code, ff_mpeg12_vlc_dc_lum_bits);
+}
 
-    // Encode the DC coefficient with differential encoding
-    encode_dc(matrix[zigzag_scan[0]], prev_dc, ff_mpeg12_vlc_dc_chroma_code, ff_mpeg12_vlc_dc_chroma_bits, &dc_code, &dc_bits);
-    buffer[buffer_index++] = (uint8_t)(dc_code);
-    buffer_index += dc_bits / 8;  // Adjust for bit length
-
-    // Encode AC coefficients (run-length encoding)
-    for (int i = 1; i < 64; i++) {
-        int ac_val = matrix[zigzag_scan[i]];
-        encode_ac(ac_val, &ac_code, &ac_bits);
-        
-        if (ac_val == 0) {
-            run_length++;
-        } else {
-            if (run_length > 15) {
-                // Handle large run-length (escaping sequence)
-                buffer[buffer_index++] = 0x01;
-                buffer[buffer_index++] = 0x00;
-                run_length = 0;
-            }
-            
-            buffer[buffer_index++] = (uint8_t)(ac_code);
-            buffer_index += ac_bits / 8;
-            run_length = 0;  // Reset RLE counter
-        }
-    }
-
-    // Return total number of bytes written to the buffer
-    return buffer_index;
+int encode_mpeg1_c(uint8_t* buffer, int matrix[64], int prev_dc) {
+    return encode_mpeg1(buffer, matrix, prev_dc, ff_mpeg12_vlc_dc_chroma_code, ff_mpeg12_vlc_dc_chroma_bits);
 }

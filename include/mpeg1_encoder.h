@@ -21,7 +21,8 @@ extern const int zigzag_scan[64];
 // Function declarations
 void encode_dc(int dc_val, int prev_dc_val, const uint16_t* code_table, const unsigned char* bit_table, int* code, int* bits);
 void encode_ac(int ac_val, int* code, int* bits);
-int encode_mpeg1_y(uint8_t *matrix, uint8_t *buffer, int prev_dc);
-int encode_mpeg1_c(uint8_t *matrix, uint8_t *buffer, int prev_dc);
+int encode_mpeg1(uint8_t* buffer, int matrix[64], int prev_dc, const uint16_t* huff_code, const unsigned char* huff_bits);
+int encode_mpeg1_y(uint8_t* buffer, int matrix[64], int prev_dc);
+int encode_mpeg1_c(uint8_t* buffer, int matrix[64], int prev_dc);
 
 #endif // MPEG1_ENCODER_H

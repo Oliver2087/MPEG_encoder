@@ -12,11 +12,7 @@ int main() {
         83, 71, 80, 44, 21, 19, 16, 22, 
         69, 52, 67, 51, 21, 19, 10, 6, 
     };
-    quantizeBlock(mat, quantization_table_y, 1);
-    for(int i = 0; i < 8; i++) {
-        for(int j = 0; j < 8; j++) {
-            printf("%d ", mat[i * 8 + j]);
-        }
-        printf("\n");
-    }
+    int buf[64];
+    quantizeBlock(buf, mat, quantization_table_y, 1);
+    return 0;
 }

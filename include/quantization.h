@@ -4,6 +4,7 @@
 #include <math.h>
 
 #include "seperateMatrix.h"
+#include "ffwt.h"
 
 #define PI 3.1415927
 
@@ -17,5 +18,5 @@ void performFastDCT(double block[BLOCKSIZE*BLOCKSIZE]);
 void performDCT(double block[BLOCKSIZE][BLOCKSIZE]);
 
 // scale from 0 to 51
-void quantizeBlock(uint8_t block[BLOCKSIZE*BLOCKSIZE], const unsigned char* quantization_table, uint8_t scale);
+void quantizeBlock(int mat[BLOCKSIZE * BLOCKSIZE], uint8_t block[BLOCKSIZE*BLOCKSIZE], const unsigned char* quantization_table, uint8_t scale);
 #endif
