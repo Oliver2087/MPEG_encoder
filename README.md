@@ -21,3 +21,17 @@ The video format output by the encoder is MPEG-1. In order to make the output vi
 4. Slice Data: Encodes the actual image data in macroblocks using motion compensation, DCT coefficients, and run-length encoding.
 5. End of Sequence Code: Marks the end of the video stream.
 6. Bitstream Encoding: Data is compressed using Huffman coding, zig-zag scan, and variable-length codes.
+
+
+# Android app
+This app is designed to convert MPEG-1 video files to MP4 format and play the converted video.
+
+How to Test with a Different MPEG-1 File?
+Replace the existing sample.mpg file in the VideoConverterApp/app/src/main/res/raw folder with your new MPEG-1 video file.
+Make sure to name your new file sample.mpg.
+Build and run the app.
+
+Target Environment
+Device: Pixel 5
+API Level: 28
+Enjoy using the Video Converter App!
