@@ -35,3 +35,22 @@ Target Environment
 Device: Pixel 5
 API Level: 28
 Enjoy using the Video Converter App!
+
+
+# QT GUI
+Dynamic Compilation: Compile and execute C programs, capturing their outputs for display.
+Progress Bar: Real-time progress updates during execution.
+Video Playback: Play videos seamlessly within the application.
+
+Requirements
+  * Operating System: Linux (tested on Ubuntu).
+
+Dependencies:
+  * CMake: Version 3.5 or higher.
+  * Qt 5.x: Core, Widgets, Multimedia, MultimediaWidgets modules.
+GCC: Compiler for compiling C programs.
+
+Installation:
+
+`sudo apt update
+sudo apt install cmake qt5-default qttools5-dev-tools gcc g++`
