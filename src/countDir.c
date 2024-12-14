@@ -23,6 +23,10 @@ int filter_jpeg(const struct dirent *entry) {
     return 0; // Exclude this file
 }
 
+int my_alphasort(const struct dirent **a, const struct dirent **b) {
+    return strcmp((*a)->d_name, (*b)->d_name);
+}
+
 // Function to load all filenames from a directory with .jpeg extension
 int load_filenames(const char *directory, unsigned char filenames[MAX_FILES][MAX_FILENAME_LEN]) {
     struct dirent **namelist;
@@ -31,7 +35,7 @@ int load_filenames(const char *directory, unsigned char filenames[MAX_FILES][MAX
     struct stat file_stat;
 
     // Use scandir with the filter function
-    n = scandir(directory, &namelist, filter_jpeg, alphasort);
+    n = scandir(directory, &namelist, filter_jpeg, my_alphasort);
     if (n < 0) {
         perror("scandir");
         return -1;

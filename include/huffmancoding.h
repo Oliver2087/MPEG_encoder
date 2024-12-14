@@ -1,39 +1,60 @@
-#ifndef HUFFMANCODING_H
-#define HUFFMANCODING_H
+#ifndef MPEG1_ENCODER_H
+#define MPEG1_ENCODER_H
 
-#include <stdint.h> // For fixed-width integer types
+#include <stdint.h>
 
-// Maximum size for the bitstream buffer (adjust as needed)
-#ifndef MAX_BITSTREAM_SIZE
-#define MAX_BITSTREAM_SIZE 65536
-#endif
+// Constants
+#define MAX_BITSTREAM_SIZE 1024
 
-// Structure for Huffman code: holds the bitstring and its length
-typedef struct {
-    uint32_t bitstring; // The code bits (stored in a 32-bit integer)
-    uint8_t bitlength;  // Number of valid bits in bitstring
-} HuffmanCode;
+// Huffman encoding tables for DC coefficients (Luminance and Chrominance)
+extern const uint16_t ff_mpeg12_vlc_dc_lum_code[12];
+extern const unsigned char ff_mpeg12_vlc_dc_lum_bits[12];
+extern const uint16_t ff_mpeg12_vlc_dc_chroma_code[12];
+extern const unsigned char ff_mpeg12_vlc_dc_chroma_bits[12];
 
-// Extern declarations of Huffman tables (defined in huffmancoding.c or another source file)
-// For example, you might have:
-extern HuffmanCode dc_huffman_table[12];
-extern HuffmanCode ac_huffman_table[256]; 
+// Huffman encoding table for AC coefficients
+extern const uint16_t ff_mpeg1_vlc_table[113][2];
 
-// Zigzag order array for rearranging coefficients
-extern const int zigzag_order[64];
-
-// Global index tracking how many bits have been written into the current bitstream
-extern int bitstream_index;
+// Zigzag scan table
+extern const int zigzag_scan[64];
 
 // Function prototypes
+/**
+ * Encodes a DC coefficient using the provided Huffman code and bit tables.
+ *
+ * @param dc_val       DC coefficient value.
+ * @param code_table   Huffman code table for DC coefficients.
+ * @param bit_table    Huffman bit table for DC coefficients.
+ * @param code         Pointer to store the generated Huffman code.
+ * @param bits         Pointer to store the number of bits in the Huffman code.
+ */
+void encode_dc(int dc_val, const uint16_t* code_table, const unsigned char* bit_table, int* code, int* bits);
 
 /**
- * @brief Perform Huffman coding on a single DCT block of coefficients.
+ * Encodes an AC coefficient using the MPEG-1 Huffman encoding table.
  *
- * @param bitstream_buffer Buffer into which the Huffman-coded bits are written.
- * @param block Pointer to the block of quantized DCT coefficients (8x8 or 16x16 depending on your setup).
- * @param previous_dc_coeffi The DC coefficient of the previous block (for differential coding).
+ * @param ac_val       AC coefficient value.
+ * @param code         Pointer to store the generated Huffman code.
+ * @param bits         Pointer to store the number of bits in the Huffman code.
  */
-void performHuffmanCoding(uint8_t* bitstream_buffer, double* block, double previous_dc_coeffi);
+void encode_ac(int ac_val, int* code, int* bits);
 
-#endif // HUFFMANCODING_H
+/**
+ * Encodes an 8x8 luminance block of coefficients using the MPEG-1 Zigzag order and Huffman tables.
+ *
+ * @param matrix       Pointer to the 8x8 coefficient matrix (64 elements).
+ * @param buffer       Pointer to the buffer where encoded data will be written.
+ * @return             The length of the encoded data in bytes.
+ */
+int encode_mpeg1_y(uint8_t *matrix, uint8_t *buffer);
+
+/**
+ * Encodes an 8x8 chrominance block of coefficients using the MPEG-1 Zigzag order and Huffman tables.
+ *
+ * @param matrix       Pointer to the 8x8 coefficient matrix (64 elements).
+ * @param buffer       Pointer to the buffer where encoded data will be written.
+ * @return             The length of the encoded data in bytes.
+ */
+int encode_mpeg1_c(uint8_t *matrix, uint8_t *buffer);
+
+#endif // MPEG1_ENCODER_H
