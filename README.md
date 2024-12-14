@@ -4,7 +4,7 @@ The project aims to create an efficient encoder that converts JPEG images into a
 
 Other features of this encoder include a command-line interface (CLI) for encoding and viewing images, as well as a graphical user interface (GUI) for selecting and organizing files, applying real-time video effects, and controlling playback, and an Android client which enables an Android device play the MPEG1 video.
 
-The branch Oliver-patch-2 can run a green-screen MPEG file by inputting the given path for the JPEG images and the number of pictures to present. 
+  * The branch Oliver-patch-2 can run a green-screen MPEG file by inputting the given path for the JPEG images and the number of pictures to present. 
 
 # Encoding and Decoding
 
@@ -51,8 +51,11 @@ Dependencies:
   * CMake: Version 3.5 or higher.
   * Qt 5.x: Core, Widgets, Multimedia, MultimediaWidgets modules.
 GCC: Compiler for compiling C programs.
+glibc-2.34
 
 Installation:
 
-`sudo apt update
-sudo apt install cmake qt5-default qttools5-dev-tools gcc g++`
+`sudo apt update`
+`sudo apt install cmake qt5-default qttools5-dev-tools gcc g++`
+
+
