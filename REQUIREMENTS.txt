@@ -1,0 +1,12 @@
+# Compiler and Build Tools
+gcc >= 9.0 (for OpenMP and modern C standards)
+make (if using Makefiles for builds)
+
+# Libraries
+libavformat-dev   # FFmpeg library for handling multimedia formats
+libavutil-dev     # FFmpeg utility library
+libjpeg-dev       # JPEG image handling library
+libm (math library, typically included in libc)
+
+# Additional Notes
+Ensure all header files are included in the specified "${workspaceFolder}/include" directory.
