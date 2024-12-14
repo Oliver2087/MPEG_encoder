@@ -6,12 +6,15 @@
 #include <jpeglib.h>
 #include <limits.h>
 #include <string.h>
+#include <stdint.h>
 #include "processFrame.h"
 #include "motionCompEst.h"
+#include "huffmancoding.h"
 
 #define GOP_SIZE 8       // Frames per GOP
 #define PI 3.1415927
 #define B_FRAME_SIZE 2       // Number of B-frames between I and P-frames
+#define MIN_BLOCK_SIZE 4
 
 const unsigned char quantization_table[BLOCK_SIZE][BLOCK_SIZE] = {
     {16, 11, 10, 16, 24, 40, 51, 61},
@@ -24,14 +27,49 @@ const unsigned char quantization_table[BLOCK_SIZE][BLOCK_SIZE] = {
     {72, 92, 95, 98, 112, 100, 103, 99}
 };
 
-void assignFrameTypes(FrameType* frame_types, int total_frames, int gop_size, int b_frames) {
-    for (int i = 0; i < total_frames; i++) {
-        if (i % gop_size == 0) {
-            frame_types[i] = I_FRAME; // I-frame at the start of each GOP
+// Function to initialize a single frame
+void initializeFrame(Frame* frame, FrameType type, int frame_number, Frame* previous_frame, Frame* future_frame, int width, int height) {
+    frame->type = type;                     // Set the frame type
+    frame->frame_number = frame_number;     // Set the frame number
+    frame->previous_frame = previous_frame; // Link to the previous frame
+    frame->future_frame = future_frame;     // Link to the future frame
+    frame->width = width;
+    frame->height = height;
+
+    // Allocate and initialize block data (example size)
+    size_t block_size = 1024; // Example block size
+    frame->block_data = (unsigned char*)malloc(block_size);
+    if (!frame->block_data) {
+        fprintf(stderr, "Memory allocation failed for block data\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Optionally initialize block_data to zeros
+    for (size_t i = 0; i < block_size; i++) {
+        frame->block_data[i] = 0;
+    }
+}
+
+void assignEncodingFrameTypes(GopStruct* current_GOP, int gop_size, int b_frames) {
+    for (int i = 0; i < gop_size; i++) {
+        if (i == 0) {
+            current_GOP->encoding_frame_types[i] = I_FRAME; // I-frame at the start of each GOP
         } else if ((i % gop_size - 1) % (b_frames + 1) == 0) {
-            frame_types[i] = P_FRAME; // P-frame after B-frames
+            current_GOP->encoding_frame_types[i] = P_FRAME; // P-frame after B-frames
         } else {
-            frame_types[i] = B_FRAME; // B-frame between I- and P-frames
+            current_GOP->encoding_frame_types[i] = B_FRAME; // B-frame between I- and P-frames
+        }
+    }
+}
+
+void assignDisplayFrameTypes(GopStruct* current_GOP, int gop_size) {
+    for (int i = 0; i < gop_size; i++) {
+        if (i == 0) {
+            current_GOP->display_frame_types[i] = I_FRAME; // I-frame at the start of each GOP
+        } else if (i <= 3) {
+            current_GOP->display_frame_types[i] = P_FRAME; // P-frames follow the I-frame
+        } else {
+            current_GOP->display_frame_types[i] = B_FRAME; // B-frames follow the P-frames
         }
     }
 }
@@ -109,7 +147,74 @@ void quantizeBlock(double block[BLOCK_SIZE][BLOCK_SIZE], const unsigned char qua
     }
 }
 
-void performIntraframCompression(int width, int height, unsigned char* bmp_buffer, int num_blocks, CompressedData* compressed_data) {
+static void processBlock(
+    unsigned char* current_frame,
+    unsigned char* predicted_frame,
+    int width,
+    int height,
+    int block_x,
+    int block_y,
+    unsigned char* bitstream_buffer,
+    int* bitstream_index,
+    double* previous_dc_coeffi,
+    FILE* outfile
+) {
+    double block[BLOCK_SIZE][BLOCK_SIZE];
+
+    // Compute residual
+    for (int i = 0; i < BLOCK_SIZE; i++) {
+        for (int j = 0; j < BLOCK_SIZE; j++) {
+            int current_pixel = current_frame[(block_y + i) * width + (block_x + j)];
+            int predicted_pixel = predicted_frame[(block_y + i) * width + (block_x + j)];
+            block[i][j] = (double)(current_pixel - predicted_pixel);
+        }
+    }
+
+    // Print all block values for debugging
+    printf("Block values:\n");
+    for (int i = 0; i < 64; i++) {
+        printf("%f ", block[i]);
+        if ((i + 1) % 8 == 0) {
+            printf("\n"); // Print a newline every 8 values for better readability
+        }
+    }
+
+    performFastDCT(block);
+    quantizeBlock(block, quantization_table);
+
+    // Huffman encode this block
+    performHuffmanCoding(bitstream_buffer, (double*)block, *previous_dc_coeffi);
+
+    // Write the Huffman-coded bitstream to the file
+    int bytes_to_write = (*bitstream_index + 7) / 8;
+    fwrite(bitstream_buffer, 1, bytes_to_write, outfile);
+
+    // Prepare for the next block
+    memset(bitstream_buffer, 0, bytes_to_write);
+    *bitstream_index = 0;
+    *previous_dc_coeffi = round(block[0][0]); // Update DC predictor
+}
+
+void encodeResiduals(
+    unsigned char* current_frame,
+    unsigned char* predicted_frame,
+    int width,
+    int height,
+    FILE* outfile
+) {
+    unsigned char bitstream_buffer[MAX_BITSTREAM_SIZE];
+    memset(bitstream_buffer, 0, sizeof(bitstream_buffer));
+    bitstream_index = 0;
+    double previous_dc_coeffi = 0.0; // DC predictor initialization
+
+    for (int block_y = 0; block_y < height; block_y += BLOCK_SIZE) {
+        for (int block_x = 0; block_x < width; block_x += BLOCK_SIZE) {
+            processBlock(current_frame, predicted_frame, width, height, block_x, block_y, bitstream_buffer, &bitstream_index, &previous_dc_coeffi, outfile);
+        }
+    }
+}
+
+void performIntraframeCompression(int width, int height, unsigned char* bmp_buffer, int num_blocks, CompressedData* compressed_data) {
     int i_CurrentBlock = 0;
     printf("Processing blocks: 0/%d", num_blocks);
     fflush(stdout);
@@ -171,180 +276,245 @@ void performIntraframCompression(int width, int height, unsigned char* bmp_buffe
     printf("\n");
 }
 
-void processIFrame(struct jpeg_decompress_struct cinfo, unsigned char* bmp_buffer, int frame_index) {
-    int width = cinfo.output_width;
-    int height = cinfo.output_height;
-    int pixel_size = cinfo.output_components;
+void processIFrame(Frame *curr_frame) {
+    if (curr_frame == NULL) return;
+
+    // Assuming the JPEG struct has been initialized and ready to use
+    int width = curr_frame->width;
+    int height = curr_frame->height;
     int num_blocks_x = width / BLOCK_SIZE;
     int num_blocks_y = height / BLOCK_SIZE;
     int num_blocks = num_blocks_x * num_blocks_y;
 
     CompressedData compressed_frame;
-    performIntraframCompression(width, height, bmp_buffer, num_blocks, &compressed_frame);
-
-    // Generate dynamic filename for output
-    char output_filename[256];
-    snprintf(output_filename, sizeof(output_filename), "../include/Image%d.bin", frame_index);
-
-    FILE* outfile = fopen(output_filename, "wb");
-    if (!outfile) {
-        perror("Error: Failed to open the output file.");
-        exit(EXIT_FAILURE);
+    compressed_frame.data = malloc(sizeof(double) * num_blocks * BLOCK_SIZE * BLOCK_SIZE);
+    if (compressed_frame.data == NULL) {
+        fprintf(stderr, "Memory allocation failed for compressed frame data.\n");
+        return;
     }
 
-    fwrite(bmp_buffer, sizeof(unsigned char), width * height * pixel_size, outfile);
+    performIntraframeCompression(width, height, curr_frame->block_data, num_blocks, &compressed_frame);
+
+    char output_filename[256];
+    snprintf(output_filename, sizeof(output_filename), OUTPUT_PATH, curr_frame->frame_number);
+
+    FILE *outfile = fopen(output_filename, "wb");
+    if (outfile == NULL) {
+        perror("Error: Failed to open the output file.");
+        free(compressed_frame.data);
+        return;
+    }
+
+    fwrite(&width, sizeof(int), 1, outfile);
+    fwrite(&height, sizeof(int), 1, outfile);
+    fwrite(&(int){BLOCK_SIZE}, sizeof(int), 1, outfile);
+
+    // Writing compressed data directly as an example
+    fwrite(compressed_frame.data, sizeof(double), num_blocks * BLOCK_SIZE * BLOCK_SIZE, outfile);
+
     fclose(outfile);
-
-    // Free compressed data
     free(compressed_frame.data);
-
-    printf("Processed I-frame %d successfully.\n", frame_index);
+    printf("Processed I-frame %d successfully and stored to %s.\n", curr_frame->frame_number, output_filename);
 }
 
-void processPFrame(struct jpeg_decompress_struct cinfo, unsigned char* current_frame, unsigned char* reference_frame, int frame_index) {
-    int width = cinfo.output_width;
-    int height = cinfo.output_height;
-    int block_size = 16; // Macroblock size
+void processPFrame(Frame *curr_frame) {
+    if (curr_frame == NULL || curr_frame->previous_frame == NULL) {
+        fprintf(stderr, "Invalid frame data.\n");
+        return;
+    }
+
+    int width = curr_frame->width;
+    int height = curr_frame->height;
     int search_range = 16; // Search range for motion estimation
 
-    int num_blocks_x = width / block_size;
-    int num_blocks_y = height / block_size;
+    int num_blocks_x = width / BLOCK_SIZE;
+    int num_blocks_y = height / BLOCK_SIZE;
     int total_blocks = num_blocks_x * num_blocks_y;
 
     // Allocate memory for motion vectors
-    MotionVector* motion_vectors = (MotionVector*)malloc(total_blocks * sizeof(MotionVector));
-    if (!motion_vectors) {
+    MotionVector *motion_vectors = (MotionVector *)malloc(total_blocks * sizeof(MotionVector));
+    if (motion_vectors == NULL) {
         fprintf(stderr, "Failed to allocate memory for motion vectors.\n");
+        return;
+    }
+
+    // Allocate memory for the predicted frame
+    unsigned char *predicted_frame = (unsigned char *)malloc(width * height);
+    if (predicted_frame == NULL) {
+        fprintf(stderr, "Failed to allocate memory for predicted frame.\n");
+        free(motion_vectors);
+        return;
+    }
+
+    // Perform motion estimation and compensation
+    performMotionEstimation(curr_frame->block_data, curr_frame->previous_frame->block_data, width, height, BLOCK_SIZE, search_range, motion_vectors);
+    performMotionCompensation(curr_frame->previous_frame->block_data, predicted_frame, width, height, motion_vectors, BLOCK_SIZE);
+
+    // Open output file
+    char output_filename[256];
+    snprintf(output_filename, sizeof(output_filename), OUTPUT_PATH, curr_frame->frame_number);
+    FILE *outfile = fopen(output_filename, "wb");
+    if (outfile == NULL) {
+        fprintf(stderr, "Error: Failed to open file %s for writing.\n", output_filename);
+        free(motion_vectors);
+        free(predicted_frame);
+        return;
+    }
+
+    // Write frame metadata and motion vectors
+    fwrite(&width, sizeof(int), 1, outfile);
+    fwrite(&height, sizeof(int), 1, outfile);
+    fwrite(&(int){BLOCK_SIZE}, sizeof(int), 1, outfile);
+    fwrite(motion_vectors, sizeof(MotionVector), total_blocks, outfile);
+
+    // Encode and write residuals
+    encodeResiduals(curr_frame->block_data, predicted_frame, width, height, outfile);
+
+    // Close the file and clean up
+    fclose(outfile);
+    free(motion_vectors);
+    free(predicted_frame);
+
+    printf("Processed and saved P-frame %d successfully.\n", curr_frame->frame_number);
+}
+
+
+// Function prototype (placeholders)
+extern void performBidirectionalEstimation(
+    unsigned char* current_frame,
+    unsigned char* previous_frame,
+    unsigned char* next_frame,
+    int width,
+    int height,
+    int block_size,
+    int search_range,
+    MotionVector* mv_backward_array,
+    MotionVector* mv_forward_array
+);
+
+extern void performBidirectionalCompensation(
+    unsigned char* previous_frame,
+    unsigned char* next_frame,
+    unsigned char* predicted_frame,
+    int width,
+    int height,
+    int block_size,
+    MotionVector* mv_backward_array,
+    MotionVector* mv_forward_array
+);
+
+void processBFrame(Frame *curr_frame) {
+    int width = curr_frame->width;
+    int height = curr_frame->height;
+    int search_range = 16; // Search range for motion estimation
+
+    int num_blocks_x = width / BLOCK_SIZE;
+    int num_blocks_y = height / BLOCK_SIZE;
+    int total_blocks = num_blocks_x * num_blocks_y;
+
+    // Allocate memory for forward and backward motion vectors
+    MotionVector* mv_backward_array = (MotionVector*)malloc(total_blocks * sizeof(MotionVector));
+    if (!mv_backward_array) {
+        fprintf(stderr, "Failed to allocate memory for backward motion vectors.\n");
         exit(EXIT_FAILURE);
     }
 
-    // Perform motion estimation for each macroblock
-    for (int block_y = 0; block_y < height; block_y += block_size) {
-        for (int block_x = 0; block_x < width; block_x += block_size) {
-            int block_index = (block_y / block_size) * num_blocks_x + (block_x / block_size);
-            motion_vectors[block_index] = findMotionVector(
-                current_frame, reference_frame, width, height, block_x, block_y, block_size, search_range
-            );
-        }
+    MotionVector* mv_forward_array = (MotionVector*)malloc(total_blocks * sizeof(MotionVector));
+    if (!mv_forward_array) {
+        fprintf(stderr, "Failed to allocate memory for forward motion vectors.\n");
+        free(mv_backward_array);
+        exit(EXIT_FAILURE);
     }
 
     // Allocate memory for the predicted frame
     unsigned char* predicted_frame = (unsigned char*)malloc(width * height);
     if (!predicted_frame) {
         fprintf(stderr, "Failed to allocate memory for predicted frame.\n");
-        free(motion_vectors);
+        free(mv_backward_array);
+        free(mv_forward_array);
         exit(EXIT_FAILURE);
     }
 
-    // Perform motion compensation to generate the predicted frame
-    motionCompensation(reference_frame, predicted_frame, width, height, motion_vectors, block_size);
+    // Perform bidirectional motion estimation
+    // This finds mv_backward (relative to previous_frame) and mv_forward (relative to next_frame)
+    performBidirectionalEstimation(
+        curr_frame->block_data,
+        curr_frame->previous_frame->block_data,
+        curr_frame->future_frame->block_data,
+        width,
+        height,
+        BLOCK_SIZE,
+        search_range,
+        mv_backward_array,
+        mv_forward_array
+    );
 
-    // Compute the residual (current_frame - predicted_frame)
-    unsigned char residual_frame[width * height];
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            residual_frame[y * width + x] = current_frame[y * width + x] - predicted_frame[y * width + x];
-        }
+    // Perform bidirectional motion compensation
+    // This uses both sets of vectors to form a predicted B-frame by averaging predictions
+    performBidirectionalCompensation(
+        curr_frame->previous_frame->block_data,
+        curr_frame->future_frame->block_data,
+        predicted_frame,
+        width,
+        height,
+        BLOCK_SIZE,
+        mv_backward_array,
+        mv_forward_array
+    );
+
+    // Open output file
+    char output_filename[256];
+    snprintf(output_filename, sizeof(output_filename), OUTPUT_PATH, curr_frame->frame_number);
+    FILE* outfile = fopen(output_filename, "wb");
+    if (!outfile) {
+        fprintf(stderr, "Error: Failed to open file %s for writing.\n", output_filename);
+        free(mv_backward_array);
+        free(mv_forward_array);
+        free(predicted_frame);
+        exit(EXIT_FAILURE);
     }
 
-    // Apply DCT and Quantization on the residual
-    for (int block_y = 0; block_y < height; block_y += block_size) {
-        for (int block_x = 0; block_x < width; block_x += block_size) {
-            double block[16][16];
-            for (int i = 0; i < block_size; i++) {
-                for (int j = 0; j < block_size; j++) {
-                    block[i][j] = residual_frame[(block_y + i) * width + (block_x + j)];
-                }
-            }
-            performFastDCT(block);
-            quantizeBlock(block, quantization_table);
-        }
-    }
+    // Write frame metadata (width, height, block size)
+    fwrite(&width, sizeof(int), 1, outfile);
+    fwrite(&height, sizeof(int), 1, outfile);
+    fwrite(&(int){BLOCK_SIZE}, sizeof(int), 1, outfile);
+
+    // Write motion vectors
+    // First, write backward motion vectors
+    fwrite(mv_backward_array, sizeof(MotionVector), total_blocks, outfile);
+    // Then, write forward motion vectors
+    fwrite(mv_forward_array, sizeof(MotionVector), total_blocks, outfile);
+
+    // Encode residuals (current_frame - predicted_frame)
+    // The encodeResiduals() function should handle DCT, quantization, Huffman coding, etc.
+    // Just like in the P-frame code, we do:
+    encodeResiduals(curr_frame->block_data, predicted_frame, width, height, outfile);
+
+    // Close the file
+    fclose(outfile);
 
     // Clean up
-    free(motion_vectors);
+    free(mv_backward_array);
+    free(mv_forward_array);
     free(predicted_frame);
 
-    printf("Processed P-frame %d successfully.\n", frame_index);
+    printf("Processed and saved B-frame %d successfully.\n", curr_frame->frame_number);
 }
 
-void processBFrame(struct jpeg_decompress_struct cinfo, unsigned char* current_frame, unsigned char* reference_frame, unsigned char* future_frame, int frame_index) {
-    int width = cinfo.output_width;
-    int height = cinfo.output_height;
-    int block_size = 16; // Macroblock size
-    int search_range = 16; // Search range for motion estimation
-
-    int num_blocks_x = width / block_size;
-    int num_blocks_y = height / block_size;
-    int total_blocks = num_blocks_x * num_blocks_y;
-
-    // Allocate memory for motion vectors
-    MotionVector* forward_motion_vectors = (MotionVector*)malloc(total_blocks * sizeof(MotionVector));
-    MotionVector* backward_motion_vectors = (MotionVector*)malloc(total_blocks * sizeof(MotionVector));
-    if (!forward_motion_vectors || !backward_motion_vectors) {
-        fprintf(stderr, "Failed to allocate memory for motion vectors.\n");
-        exit(EXIT_FAILURE);
+void processGOP(GopStruct* curr_GOP) {
+    if (curr_GOP == NULL) {
+        fprintf(stderr, "Invalid GOP structure.\n");
+        return;
     }
 
-    // Allocate memory for forward and backward predicted frames
-    unsigned char* forward_predicted_frame = (unsigned char*)malloc(width * height);
-    unsigned char* backward_predicted_frame = (unsigned char*)malloc(width * height);
-    if (!forward_predicted_frame || !backward_predicted_frame) {
-        fprintf(stderr, "Failed to allocate memory for predicted frames.\n");
-        free(forward_motion_vectors);
-        free(backward_motion_vectors);
-        exit(EXIT_FAILURE);
-    }
-
-    // Perform forward motion estimation (current frame -> reference frame)
-    for (int block_y = 0; block_y < height; block_y += block_size) {
-        for (int block_x = 0; block_x < width; block_x += block_size) {
-            int block_index = (block_y / block_size) * num_blocks_x + (block_x / block_size);
-            forward_motion_vectors[block_index] = findMotionVector(
-                current_frame, reference_frame, width, height, block_x, block_y, block_size, search_range
-            );
+    // Loop through each frame in the GOP up to GOP_SIZE - 1
+    for (int i = 0; i < GOP_SIZE; i++) {
+        if (curr_GOP->frames[i].type == I_FRAME) {
+            processIFrame(&curr_GOP->frames[i]);  // Pass pointer to the frame
+        } else if (curr_GOP->frames[i].type == P_FRAME) {
+            processPFrame(&curr_GOP->frames[i]);  // Pass pointer to the frame
+        } else if (curr_GOP->frames[i].type == B_FRAME) {
+            processBFrame(&curr_GOP->frames[i]);  // Pass pointer to the frame
         }
-    }
-
-    // Perform backward motion estimation (current frame -> future frame)
-    for (int block_y = 0; block_y < height; block_y += block_size) {
-        for (int block_x = 0; block_x < width; block_x += block_size) {
-            int block_index = (block_y / block_size) * num_blocks_x + (block_x / block_size);
-            backward_motion_vectors[block_index] = findMotionVector(
-                current_frame, future_frame, width, height, block_x, block_y, block_size, search_range
-            );
-        }
-    }
-
-    // Generate forward predicted frame
-    motionCompensation(reference_frame, forward_predicted_frame, width, height, forward_motion_vectors, block_size);
-
-    // Generate backward predicted frame
-    motionCompensation(future_frame, backward_predicted_frame, width, height, backward_motion_vectors, block_size);
-
-    // Compute the final bidirectional predicted frame
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            current_frame[y * width + x] = (forward_predicted_frame[y * width + x] +
-                                            backward_predicted_frame[y * width + x]) / 2;
-        }
-    }
-
-    // Clean up
-    free(forward_motion_vectors);
-    free(backward_motion_vectors);
-    free(forward_predicted_frame);
-    free(backward_predicted_frame);
-
-    printf("Processed B-frame %d successfully.\n", frame_index);
-}
-
-void processFrames(FrameType frame_type, struct jpeg_decompress_struct cinfo, unsigned char* current, unsigned char* reference, unsigned char* future, int frame_index){
-    if (frame_type == I_FRAME) {
-        processIFrame(cinfo, current, frame_index);
-    } else if (frame_type == P_FRAME) {
-        processPFrame(cinfo, current, reference, frame_index);
-    } else if (frame_type == B_FRAME) {
-        processBFrame(cinfo, current, reference, future, frame_index);
     }
 }
